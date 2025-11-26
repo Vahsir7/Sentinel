@@ -3,7 +3,7 @@ services:
   - type: web
     name: ingestion-service
     env: docker
-    context: log-ingestor/ingestion-service
+    rootDir: ingestion-service
     plan: free
     envVars:
       - key: DATABASE_URL
@@ -16,7 +16,7 @@ services:
   - type: worker
     name: processor-service
     env: docker
-    context: log-ingestor/processor-service
+    rootDir: processor-service
     plan: free
     envVars:
       - key: DATABASE_URL
