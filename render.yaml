@@ -10,6 +10,7 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+  
 
   # 2. The Python Worker
   - type: worker
