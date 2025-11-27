@@ -97,7 +97,15 @@
             methods: {
                 async fetchLogs() {
                     try {
-                        const res = await fetch('http://localhost:3080/logs');
+                        let res;
+                        try {
+                            res = await fetch('https://ingestion-service-xr9n.onrender.com/logs');
+                            if (!res.ok) throw new Error('Remote responded with ' + res.status);
+                        } catch (err) {
+                            console.warn('Remote fetch failed, falling back to http://localhost:3000/logs', err);
+                            res = await fetch('http://localhost:3000/logs');
+                            if (!res.ok) throw new Error('Local fetch failed: ' + res.status);
+                        }
                         this.logs = await res.json();
                     } catch (e) {
                         console.error("API Down", e);
