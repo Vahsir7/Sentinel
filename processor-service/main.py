@@ -13,7 +13,6 @@ STREAM_KEY = "log_stream"
 GROUP_NAME = "ai_group"
 CONSUMER_NAME = "worker_1"
 
-# --- FAKE WEB SERVER FOR RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -31,6 +30,24 @@ def start_health_check():
 def get_db_connection():
     db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/logs_db")
     return psycopg2.connect(db_url)
+
+def init_db_schema():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            id SERIAL PRIMARY KEY,
+            log_id TEXT NOT NULL,
+            service TEXT NOT NULL,
+            level TEXT NOT NULL,
+            message TEXT NOT NULL,
+            is_anomaly BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 r = redis.from_url(redis_url, decode_responses=True)
@@ -88,10 +105,9 @@ def process_log(log_id, log_data):
 
 def main():
     print("Full-Stack Worker Started...")
-    
-    # START THE FAKE SERVER IN BACKGROUND
-    # This keeps Render happy so it doesn't kill the app
+
     threading.Thread(target=start_health_check, daemon=True).start()
+    init_db_schema()
     
     create_consumer_group()
 

@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"time"
 	"os"
-	
+	"time"
+
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors" 
-	_ "github.com/lib/pq"      	                  
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -34,6 +34,17 @@ type DBLog struct {
 var ctx = context.Background()
 var db *sql.DB
 
+const createLogsTableSQL = `
+CREATE TABLE IF NOT EXISTS logs (
+	id SERIAL PRIMARY KEY,
+	log_id TEXT NOT NULL,
+	service TEXT NOT NULL,
+	level TEXT NOT NULL,
+	message TEXT NOT NULL,
+	is_anomaly BOOLEAN NOT NULL DEFAULT FALSE,
+	created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);`
+
 func initDB() {
 	var err error
 	connStr := os.Getenv("DATABASE_URL")
@@ -45,9 +56,13 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	
+
 	if err = db.Ping(); err != nil {
 		log.Fatal("Cannot connect to Postgres:", err)
+	}
+
+	if _, err = db.Exec(createLogsTableSQL); err != nil {
+		log.Fatal("Cannot initialize logs table:", err)
 	}
 	fmt.Println("✅ Connected to Postgres")
 }
@@ -63,7 +78,7 @@ func main() {
 	rdb := redis.NewClient(opt)
 
 	app := fiber.New()
-	
+
 	app.Use(cors.New())
 
 	app.Post("/ingest", func(c *fiber.Ctx) error {
@@ -77,9 +92,9 @@ func main() {
 		id, err := rdb.XAdd(ctx, &redis.XAddArgs{
 			Stream: "log_stream",
 			Values: map[string]interface{}{
-				"service": entry.Service,
-				"level":   entry.Level,
-				"message": entry.Message,
+				"service":   entry.Service,
+				"level":     entry.Level,
+				"message":   entry.Message,
 				"timestamp": time.Now().Unix(),
 			},
 		}).Result()
@@ -111,6 +126,28 @@ func main() {
 		}
 
 		return c.JSON(logs)
+	})
+
+	app.Get("/stats", func(c *fiber.Ctx) error {
+		var totalLogs int
+		var anomalyCount int
+
+		err := db.QueryRow(`
+			SELECT
+				COUNT(*) AS total_logs,
+				COALESCE(SUM(CASE WHEN is_anomaly THEN 1 ELSE 0 END), 0) AS anomaly_count
+			FROM logs
+		`).Scan(&totalLogs, &anomalyCount)
+		if err != nil {
+			log.Println("Stats Query Error:", err)
+			return c.Status(500).JSON(fiber.Map{"error": "DB Stats query failed"})
+		}
+
+		return c.JSON(fiber.Map{
+			"total_logs":     totalLogs,
+			"anomaly_count":  anomalyCount,
+			"displayed_logs": 50,
+		})
 	})
 
 	log.Fatal(app.Listen(":3080"))

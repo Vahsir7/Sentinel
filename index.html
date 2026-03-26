@@ -72,11 +72,11 @@
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                 <div class="bg-gray-800 p-4 rounded border-l-4 border-blue-500">
                     <p class="text-gray-400 text-xs">TOTAL LOGS</p>
-                    <p class="text-2xl font-bold">{{ logs.length }}</p>
+                    <p class="text-2xl font-bold">{{ totalLogs }}</p>
                 </div>
                 <div class="bg-gray-800 p-4 rounded border-l-4 border-red-500">
                     <p class="text-gray-400 text-xs">ANOMALIES DETECTED</p>
-                    <p class="text-2xl font-bold text-red-400">{{ anomalyCount }}</p>
+                    <p class="text-2xl font-bold text-red-400">{{ totalAnomalies }}</p>
                 </div>
                 <div class="bg-gray-800 p-4 rounded border-l-4 border-green-500">
                     <p class="text-gray-400 text-xs">INGESTION RATE</p>
@@ -139,6 +139,8 @@
             data() {
                 return {
                     logs: [],
+                    totalLogs: 0,
+                    totalAnomalies: 0,
                     isSystemBooting: true,
                     activeApi: 'DETECTING...', // 'LOCAL' or 'CLOUD'
                     currentEnv: 'Scanning...',
@@ -159,32 +161,47 @@
                 }
             },
             methods: {
-                async bootSystem() {
-                    // STEP 1: Check Localhost First
-                    this.statusMessage = "Pinging Localhost...";
+                isLocalDashboardHost() {
+                    const host = window.location.hostname;
+                    const protocol = window.location.protocol;
+                    return protocol === 'file:' || host === 'localhost' || host === '127.0.0.1' || host === '::1';
+                },
+
+                async fetchWithTimeout(url, timeoutMs = 2000) {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), timeoutMs);
                     try {
-                        await fetch(`${LOCAL_API_URL}/logs`, { signal: AbortSignal.timeout(2000) });
-                        // If we get here, Localhost is UP
+                        return await fetch(url, { signal: controller.signal });
+                    } finally {
+                        clearTimeout(timer);
+                    }
+                },
+
+                async bootSystem() {
+                    if (this.isLocalDashboardHost()) {
                         this.activeApi = 'LOCAL';
                         this.currentEnv = 'LOCALHOST DETECTED';
                         this.status.env = 'ok';
-                        this.status.go = 'ok';
-                        this.status.python = 'ok'; // Assumed ok if local go is ok
-                        
-                        // Instant boot for local
+
+                        this.statusMessage = 'Pinging Localhost...';
+                        try {
+                            const res = await this.fetchWithTimeout(`${LOCAL_API_URL}/logs`, 2500);
+                            this.status.go = res.ok ? 'ok' : 'error';
+                            this.status.python = res.ok ? 'ok' : 'pending';
+                        } catch (e) {
+                            this.status.go = 'error';
+                            this.status.python = 'pending';
+                        }
+
                         setTimeout(() => this.finishBoot(), 500);
                         return;
-                    } catch (e) {
-                        console.log("Localhost unavailable, switching to Cloud...");
                     }
 
-                    // STEP 2: Fallback to Cloud (Render)
                     this.activeApi = 'CLOUD';
                     this.currentEnv = 'RENDER CLOUD';
                     this.status.env = 'ok';
                     this.statusMessage = "Waking up free-tier instances (Approx 45s)...";
 
-                    // Start Cloud Wakeup Sequence
                     this.wakeUpCloudServices();
                 },
 
@@ -208,8 +225,12 @@
 
                 finishBoot() {
                     this.isSystemBooting = false;
-                    this.fetchLogs();
-                    setInterval(this.fetchLogs, 2000);
+                    this.fetchDashboardData();
+                    setInterval(this.fetchDashboardData, 2000);
+                },
+
+                async fetchDashboardData() {
+                    await Promise.all([this.fetchLogs(), this.fetchStats()]);
                 },
 
                 async fetchLogs() {
@@ -218,6 +239,17 @@
                         this.logs = await res.json();
                     } catch (e) {
                         console.error("API Error", e);
+                    }
+                },
+
+                async fetchStats() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/stats`);
+                        const stats = await res.json();
+                        this.totalLogs = stats.total_logs ?? 0;
+                        this.totalAnomalies = stats.anomaly_count ?? 0;
+                    } catch (e) {
+                        console.error("Stats API Error", e);
                     }
                 },
                 formatDate(dateStr) {
